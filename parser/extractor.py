@@ -113,20 +113,20 @@ async def extract_fields(raw_text: str) -> dict:
     kwargs = {
         "model": LLM_MODEL,
         "max_tokens": MAX_TOKENS,
-        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.0,
+        "messages": [{"role": "user", "content": prompt + "\nSTART YOUR RESPONSE WITH {"}],
     }
 
     if LLM_API_KEY:
         kwargs["api_key"] = LLM_API_KEY
 
-    # Force JSON output on providers that support it (Groq, OpenAI, Mistral, Azure)
-    if _supports_json_mode(LLM_MODEL):
-        kwargs["response_format"] = {"type": "json_object"}
+    # Removed strict response_format because it causes Groq to occasionally crash
+    # with `json_validate_failed`. Our _parse_json already handles markdown.
+    # if _supports_json_mode(LLM_MODEL):
+    #     kwargs["response_format"] = {"type": "json_object"}
 
     response = await acompletion(**kwargs)
     content = response.choices[0].message.content.strip()
 
-    # Debug: print raw LLM output
-    print("LLM raw output:", repr(content))
-
+    # Return parsed data
     return _parse_json(content)
