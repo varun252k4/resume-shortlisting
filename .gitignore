@@ -3,4 +3,5 @@ __pycache__
 *.egg-info
 *.pdf
 .venv
-scorer/feedback_store.json
+scorer/feedback_store.jsonfrontend/node_modules/
+chroma_db/chroma.sqlite3
