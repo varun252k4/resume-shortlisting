@@ -13,7 +13,7 @@ from chromadb.config import Settings
 
 from config import CHROMA_PATH
 from embedder import embed_texts
-from models import ParsedResume
+from models import JDRequirements, ParsedResume
 
 _client = chromadb.PersistentClient(
     path=CHROMA_PATH,
@@ -25,9 +25,27 @@ def _hash(text: str, length: int = 12) -> str:
     return hashlib.md5(text.encode()).hexdigest()[:length]
 
 
+def _safe_str(value: str | None) -> str:
+    return (value or "").strip().lower()
+
+
+def get_resume_id(resume: ParsedResume) -> str:
+    """
+    Stable candidate id for feedback and reuse across uploads/re-runs.
+    """
+    name = _safe_str(resume.name)
+    email = _safe_str(resume.contact.email)
+    skills = ",".join(sorted({_safe_str(s) for s in resume.skills if s and s.strip()}))
+    roles = ",".join(
+        sorted({_safe_str(exp.role) for exp in resume.work_experience if exp.role and exp.role.strip()})
+    )
+    identifier = f"{name}|{email}|{roles}|{skills}"
+    return _hash(identifier, 16)
+
+
 # ── JD Indexing (raw text → chunks → vectors) ─────────────────────────────
 
-def _chunk_jd(jd_text: str) -> list[dict]:
+def _chunk_jd(jd_text: str, requirements: JDRequirements | None = None) -> list[dict]:
     """
     Split JD into meaningful chunks with metadata tags.
     No LLM needed — we use simple line/section splitting.
@@ -64,10 +82,28 @@ def _chunk_jd(jd_text: str) -> list[dict]:
             "weight": current_weight,
         })
 
+    # Explicit requirement injection from structured parsing
+    if requirements:
+        req_chunks = []
+        for skill in requirements.required_skills:
+            req_chunks.append({"text": f"Required skill: {skill}", "weight": 1.0})
+        for skill in requirements.preferred_skills:
+            req_chunks.append({"text": f"Preferred skill: {skill}", "weight": 0.6})
+        for qual in requirements.qualifications:
+            req_chunks.append({"text": f"Qualification: {qual}", "weight": 0.9})
+        for keyword in requirements.role_keywords:
+            req_chunks.append({"text": f"Role keyword: {keyword}", "weight": 0.65})
+        if requirements.required_experience_years is not None:
+            req_chunks.append({
+                "text": f"Minimum experience: {requirements.required_experience_years}+ years",
+                "weight": 1.0,
+            })
+        chunks.extend(req_chunks)
+
     return chunks
 
 
-async def index_jd(jd_text: str) -> str:
+async def index_jd(jd_text: str, requirements: JDRequirements | None = None) -> str:
     """
     Embed raw JD text chunks and store in ChromaDB.
     Returns jd_id. No-op if already indexed.
@@ -79,7 +115,7 @@ async def index_jd(jd_text: str) -> str:
     if collection_name in existing:
         return jd_id
 
-    chunks = _chunk_jd(jd_text)
+    chunks = _chunk_jd(jd_text, requirements)
     if not chunks:
         return jd_id
 
@@ -138,7 +174,7 @@ async def index_resume(resume: ParsedResume) -> str:
     Embed resume fields and store in ChromaDB.
     Returns resume_id. Overwrites if same candidate re-indexed.
     """
-    resume_id = _hash(str(resume.name) + str(resume.skills) + str(resume.work_experience))
+    resume_id = get_resume_id(resume)
     collection_name = f"resume_{resume_id}"
 
     # Always re-index (resume may be updated)

@@ -2,19 +2,23 @@ import time
 import asyncio
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from uuid import uuid4
 
+from feedback_store import add_feedback_record, get_calibration
 from models import (
     ParsedResume, ParseResponse, ContactInfo, WorkExperience, Education,
-    ScoreRequest, ScoreResponse, BatchScoreRequest,
+    ScoreRequest, ScoreResponse, BatchScoreRequest, FeedbackRequest,
 )
 from parser import extract_raw_text, clean_text
 from extractor import extract_fields
 from scorer import score_candidate
+from jd_parser import parse_job_description
 
 app = FastAPI(
     title="AI Resume Screening API",
     description="Phase 1: Resume parsing. Phase 2: Vector-based JD matching.",
-    version="3.0.0",
+    version="3.1.0",
 )
 
 app.add_middleware(
@@ -95,7 +99,14 @@ async def score_single(body: ScoreRequest):
     """
     start = time.time()
     try:
-        result = await score_candidate(body.resume, body.jd_text, body.weightage)
+        result = await score_candidate(
+            body.resume,
+            body.jd_text,
+            body.weightage,
+            requirements=body.requirements,
+            use_ai_summary=body.use_ai_summary,
+            shortlist_threshold=body.shortlist_threshold,
+        )
         return ScoreResponse(
             success=True,
             result=result,
@@ -118,7 +129,14 @@ async def score_batch(body: BatchScoreRequest):
     async def _score_one(resume: ParsedResume) -> ScoreResponse:
         t = time.time()
         try:
-            result = await score_candidate(resume, body.jd_text, body.weightage)
+            result = await score_candidate(
+                resume,
+                body.jd_text,
+                body.weightage,
+                requirements=body.requirements,
+                use_ai_summary=body.use_ai_summary,
+                shortlist_threshold=body.shortlist_threshold,
+            )
             return ScoreResponse(success=True, result=result,
                                  score_time_seconds=round(time.time() - t, 2))
         except Exception as e:
@@ -129,4 +147,55 @@ async def score_batch(body: BatchScoreRequest):
         key=lambda r: r.result.total_score if r.success and r.result else -1,
         reverse=True,
     )
+    for idx, response in enumerate(results, start=1):
+        if response.success and response.result:
+            response.result.rank = idx
     return results
+
+
+# ── JD tools ────────────────────────────────────────────────────────────────
+
+
+class JDTextInput(BaseModel):
+    jd_text: str
+
+
+@app.post("/jd/analyze")
+def analyze_jd(payload: JDTextInput):
+    """
+    Parse structured job-requirement signals from free text.
+    """
+    requirements = parse_job_description(payload.jd_text)
+    return {
+        "success": True,
+        "raw_text": payload.jd_text,
+        "requirements": requirements,
+    }
+
+
+# ── Feedback loop ──────────────────────────────────────────────────────────
+
+
+@app.post("/feedback")
+def submit_feedback(payload: FeedbackRequest):
+    """
+    Store recruiter feedback and apply calibration signals for future score runs.
+    """
+    payload_dict = payload.model_dump()
+    payload_dict["feedback_id"] = str(uuid4())
+    if not payload_dict.get("resume_id") and payload_dict.get("resume_name"):
+        payload_dict["resume_id"] = payload_dict["resume_name"]
+
+    jd_id, calibration = add_feedback_record(payload_dict)
+
+    return {
+        "success": True,
+        "feedback_id": payload_dict["feedback_id"],
+        "jd_id": jd_id,
+        "calibration": calibration,
+    }
+
+
+@app.get("/feedback/status/{jd_id}")
+def feedback_status(jd_id: str):
+    return {"success": True, "calibration": get_calibration(jd_id)}

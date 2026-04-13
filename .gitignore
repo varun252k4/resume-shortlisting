@@ -2,3 +2,5 @@
 __pycache__
 *.egg-info
 *.pdf
+.venv
+scorer/feedback_store.json
