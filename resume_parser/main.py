@@ -3,9 +3,9 @@ import asyncio
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from models import ParsedResume, ParseResponse, ContactInfo, WorkExperience, Education
-from parser import extract_raw_text, clean_text
-from extractor import extract_fields
+from resume_parser.models import ParsedResume, ParseResponse, ContactInfo, WorkExperience, Education
+from resume_parser import extract_raw_text, clean_text
+from resume_parser.extractor import extract_fields
 
 app = FastAPI(
     title="Resume Parser API",

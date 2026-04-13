@@ -1,4 +1,5 @@
 import os
+from typing import Optional
 
 # ── AI Provider Configuration ──────────────────────────────────────────────
 # Set these environment variables to switch providers with zero code changes.
@@ -12,5 +13,5 @@ import os
 # ──────────────────────────────────────────────────────────────────────────
 
 LLM_MODEL: str = os.getenv("LLM_MODEL", "groq/llama3-70b-8192")
-LLM_API_KEY: str | None = os.getenv("LLM_API_KEY")  # optional override
+LLM_API_KEY: Optional[str] = os.getenv("LLM_API_KEY")  # optional override
 MAX_TOKENS: int = int(os.getenv("LLM_MAX_TOKENS", "2500"))

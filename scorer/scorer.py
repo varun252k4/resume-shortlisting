@@ -7,14 +7,21 @@ Responsibilities:
 - apply optional employer feedback calibration
 - generate short candidate summary
 """
+from typing import Optional
+
 from litellm import acompletion
 
-from feedback_store import get_calibration
-from jd_parser import parse_job_description
-from models import JDRequirements
-from models import MatchFlag, ParsedResume, ScoreBreakdown, ScoreResult, WeightageConfig
-from vector_store import index_jd, index_resume, score_resume_against_jd
-from config import LLM_API_KEY, LLM_MODEL
+from scorer.feedback_store import get_calibration
+from scorer.jd_parser import parse_job_description
+from scorer.models import (
+    JDRequirements,
+    MatchFlag,
+    ParsedResume,
+    ScoreBreakdown,
+    ScoreResult,
+    WeightageConfig,
+)
+from scorer.config import LLM_API_KEY, LLM_MODEL
 
 
 def _determine_flag(score: float) -> MatchFlag:
@@ -49,9 +56,9 @@ def _build_summary_text(
 
 
 def _merge_requirements(
-    explicit: JDRequirements | None,
-    extracted: JDRequirements | None,
-) -> JDRequirements | None:
+    explicit: Optional[JDRequirements],
+    extracted: Optional[JDRequirements],
+) -> Optional[JDRequirements]:
     if explicit is None:
         return extracted
     if extracted is None:
@@ -118,9 +125,9 @@ def _apply_calibration(jd_id: str, raw_score: float) -> tuple[float, dict]:
 
 async def score_candidate(
     resume: ParsedResume,
-    jd_text: str | None,
+    jd_text: Optional[str],
     weightage: WeightageConfig,
-    requirements: JDRequirements | None = None,
+    requirements: Optional[JDRequirements] = None,
     use_ai_summary: bool = True,
     shortlist_threshold: float = 50.0,
 ) -> ScoreResult:
@@ -139,6 +146,8 @@ async def score_candidate(
         merged_requirements = extracted_requirements
 
     scoring_text = resolved_jd_text or merged_requirements.to_text() or "Role requirements"
+
+    from scorer.vector_store import index_jd, index_resume, score_resume_against_jd
 
     jd_id = await index_jd(scoring_text, requirements=merged_requirements)
 

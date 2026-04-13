@@ -5,15 +5,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from uuid import uuid4
 
-from feedback_store import add_feedback_record, get_calibration
-from models import (
+from scorer.feedback_store import add_feedback_record, get_calibration
+from scorer.models import (
     ParsedResume, ParseResponse, ContactInfo, WorkExperience, Education,
     ScoreRequest, ScoreResponse, BatchScoreRequest, FeedbackRequest,
 )
-from parser import extract_raw_text, clean_text
-from extractor import extract_fields
-from scorer import score_candidate
-from jd_parser import parse_job_description
+from resume_parser import extract_raw_text, clean_text
+from resume_parser.extractor import extract_fields
+from scorer.scorer import score_candidate
+from scorer.jd_parser import parse_job_description
 
 app = FastAPI(
     title="AI Resume Screening API",

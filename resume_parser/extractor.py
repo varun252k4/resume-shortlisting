@@ -2,7 +2,7 @@ import json
 import re
 from litellm import acompletion
 
-from config import LLM_MODEL, LLM_API_KEY, MAX_TOKENS
+from resume_parser.config import LLM_MODEL, LLM_API_KEY, MAX_TOKENS
 
 # Models that support response_format=json_object natively
 JSON_MODE_PROVIDERS = ("groq/", "openai/", "azure/", "mistral/")

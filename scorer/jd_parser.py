@@ -7,7 +7,7 @@ job-description text without additional LLM calls during shortlisting.
 
 import re
 
-from models import JDRequirements
+from scorer.models import JDRequirements
 
 YEAR_PATTERN = re.compile(r"(\d+(?:\.\d+)?)\s*(?:\+|plus)?\s*(?:years?|yrs?)", re.IGNORECASE)
 

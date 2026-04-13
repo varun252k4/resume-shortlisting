@@ -2,14 +2,16 @@ import asyncio
 import os
 import sys
 
-# Add both parser/ and scorer/ to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "parser"))
+# Add both resume_parser/ and scorer/ to path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "resume_parser"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "scorer"))
 
-from feedback_store import add_feedback_record, get_calibration
-from extractor import extract_fields
-from jd_parser import parse_job_description
-from models import (
+from scorer.feedback_store import add_feedback_record, get_calibration
+from resume_parser import extract_raw_text, clean_text
+from resume_parser.extractor import extract_fields
+from scorer.jd_parser import parse_job_description
+from scorer.scorer import score_candidate
+from scorer.models import (
     ContactInfo,
     Education,
     FeedbackRequest,
@@ -19,8 +21,6 @@ from models import (
     WeightageConfig,
     WorkExperience,
 )
-from parser import clean_text, extract_raw_text
-from scorer import score_candidate
 
 
 # ── Sample Job Description ─────────────────────────────────────────────────
