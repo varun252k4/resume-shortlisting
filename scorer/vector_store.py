@@ -10,6 +10,7 @@ Both sides live in vector space. Scoring = querying one against the other.
 import hashlib
 import chromadb
 from chromadb.config import Settings
+from typing import Optional
 
 from config import CHROMA_PATH
 from embedder import embed_texts
@@ -25,7 +26,7 @@ def _hash(text: str, length: int = 12) -> str:
     return hashlib.md5(text.encode()).hexdigest()[:length]
 
 
-def _safe_str(value: str | None) -> str:
+def _safe_str(value: Optional[str]) -> str:
     return (value or "").strip().lower()
 
 
@@ -45,7 +46,7 @@ def get_resume_id(resume: ParsedResume) -> str:
 
 # ── JD Indexing (raw text → chunks → vectors) ─────────────────────────────
 
-def _chunk_jd(jd_text: str, requirements: JDRequirements | None = None) -> list[dict]:
+def _chunk_jd(jd_text: str, requirements: Optional[JDRequirements] = None) -> list[dict]:
     """
     Split JD into meaningful chunks with metadata tags.
     No LLM needed — we use simple line/section splitting.
@@ -103,7 +104,7 @@ def _chunk_jd(jd_text: str, requirements: JDRequirements | None = None) -> list[
     return chunks
 
 
-async def index_jd(jd_text: str, requirements: JDRequirements | None = None) -> str:
+async def index_jd(jd_text: str, requirements: Optional[JDRequirements] = None) -> str:
     """
     Embed raw JD text chunks and store in ChromaDB.
     Returns jd_id. No-op if already indexed.

@@ -1,0 +1,156 @@
+{
+  "users": [
+    {
+      "id": "aee9d1ca-e0cb-442e-aa10-0400a2e402f8",
+      "name": "Vedank",
+      "email": "vedankw11@gmail.com",
+      "password": "pbkdf2$cc83e8b8d432da183e4d06df17fbf51e$32367e1d9f35276d0f3c75b33e86bdd99c8cec46e87d79529afd96c2bdce5685",
+      "role": "candidate",
+      "created_at": "2026-04-13T20:11:15.217444+00:00"
+    },
+    {
+      "id": "b154ebc0-f400-4df8-90ac-e606fc6f98bb",
+      "name": "testUser",
+      "email": "usertechnology719@gmail.com",
+      "password": "pbkdf2$5e4d95ecf27c01fa4aebdfd3f5531075$ffa28c8bc1e42e162434136a8c341bd954b13d019344bf68247b38f1d21d47d1",
+      "role": "employer",
+      "created_at": "2026-04-13T20:12:34.686886+00:00"
+    }
+  ],
+  "resumes": [
+    {
+      "id": "e70ca146-af58-46f6-be9f-74c24b034bc7",
+      "user_id": "aee9d1ca-e0cb-442e-aa10-0400a2e402f8",
+      "candidate_name": "Vedank Wakalkar",
+      "file_name": "Vedank_VIIT_Resume.pdf",
+      "parsed": {
+        "name": "Vedank Wakalkar",
+        "contact": {
+          "email": "vedankw11@gmail.com",
+          "phone": "+919096925999",
+          "location": "Pune, Maharashtra, India",
+          "linkedin": "linkedin.com/in/Vedank"
+        },
+        "skills": [
+          "JavaScript (Node.js)",
+          "TypeScript",
+          "Python",
+          "SQL",
+          "HTML/CSS",
+          "Docker",
+          "Git",
+          "GitHub",
+          "AWS",
+          "Postman",
+          "Node.js",
+          "Express.js",
+          "FastAPI",
+          "Next.js",
+          "OpenAI Agents SDK",
+          "LangChain",
+          "RESTful APIs",
+          "OAuth 2.0",
+          "BullMQ",
+          "Redis",
+          "CLI Tooling",
+          "Prompt Engineering",
+          "RAG (Retrieval-Augmented Generation)",
+          "MongoDB",
+          "PostgreSQL",
+          "Qdrant (Vector Database)"
+        ],
+        "work_experience": [
+          {
+            "company": "SailPoint",
+            "role": "Software Engineer Intern",
+            "duration": "Jul 2025 \u2013 Present",
+            "description": "Built 10+ Tier-2 production SaaS connectors using REST APIs and OAuth-based authentication. Delivered Express Setup and 8+ i18n enhancements across Tier-3 connectors. Fixed 3 production bugs, including 2 security issues. Designed a Multi-agent CLI using OpenAI Agents SDK for IAM connector documentation. Orchestrated 5 specialized LLM agents for schema parsing and markdown generation. Built a GenAI-powered evaluation repository with a multi-agent Excel ingestion pipeline."
+          }
+        ],
+        "education": [
+          {
+            "institution": "Vishwakarma Institute of Information Technology",
+            "degree": "Bachelor of Technology in Computer Science in AIML",
+            "year": "2022 \u2013 2026"
+          }
+        ],
+        "certifications": [
+          "IBM DevOps Capstone",
+          "Deep Learning Specialization",
+          "0-1 Full Stack Web Development Course",
+          "IBM DevOps and Software Engineering"
+        ],
+        "raw_text": "Vedank Wakalkar\nPune, Maharashtra, India\n(cid:131) 9096925999\n# vedankw11@gmail.com\n(cid:239) linkedin.com/in/Vedank\n\u00a7 github.com/Vedank\nEducation\nVishwakarma Institute of Information Technology 2022 \u2013 2026\nBachelor of Technology in Computer Science in AIML, CGPA:8.68 Pune, Maharashtra\nExperience\nSailPoint Jul 2025 \u2013 Present\nSoftware Engineer Intern Pune, Maharashtra\n\u2022 Built 10+ Tier-2 production SaaS connectors using standardized REST APIs, OAuth-based authentication,\nand Added Credential Provider.\n\u2022 Delivered Express Setup and 8+ i18n enhancements across Tier-3 connectors, accelerating onboarding and\nlocalization readiness.\n\u2022 Fixed 3 production bugs, including 2 security issues, by upgrading dependencies and addressing placeholder-related\ndefects.\nGenAI Initiatives\n\u2022 Designed a Multi-agent CLI using the OpenAI Agents SDK with structured Prompt Engineering to\nauto-generate IAM connector documentation from JSON specifications.\n\u2022 Orchestrated 5 specialized LLM agents via a centralized Runner, leveraging prompt templates to modularize\nschema parsing, permission modeling, authentication logic extraction, and markdown generation.\n\u2022 Built a GenAI-powered evaluation repository using a multi-agent Excel ingestion pipeline to enable system\nfeasibility analysis and traceability across SaaS integrations.\nProjects\nAskYourPDF | Next.js, Clerk, Express.js, BullMQ, Redis, LangChain, Qdrant May 2025\n\u2217 Built a PDF question-answering system using Next.js, Express.js, and Clerk, supporting secure document uploads and\nsemantic search over user documents.\n\u2217 Implemented an asynchronous document ingestion and embedding pipeline with BullMQ, Redis, and LangChain,\ngenerating vector embeddings via Gemini 1.5 Flash.\n\u2217 Integrated Qdrant as a vector database to enable efficient retrieval for RAG-based question answering.\nTechnical Skills\nLanguages: JavaScript (Node.js), TypeScript, Python, SQL, HTML/CSS\nDeveloper Tools: Docker, Git, GitHub, AWS, Postman\nTechnologies/Frameworks: Node.js, Express.js, FastAPI, Next.js, OpenAI Agents SDK, LangChain, RESTful APIs,\nOAuth 2.0, BullMQ, Redis, CLI Tooling, Prompt Engineering, RAG (Retrieval-Augmented Generation)\nDatabases/Storage: MongoDB, PostgreSQL, Qdrant (Vector Database)\nCertifications\nIBM DevOps Capstone\nDeep Learning Specialization\n0-1 Full Stack Web Development Course\nIBM DevOps and Software Engineering\nExtra-Curricular Activities\nStudied and documented GenAI fundamentals alongside internship work, authoring 8+ technical blogs on LLMs,\ntokenization, vector embeddings, system prompting, chain-of-thought reasoning, agentic AI, and RAG failure\nmodes. Blogs published on Hashnode (vedank.hashnode.dev)."
+      },
+      "uploaded_at": "2026-04-13T20:11:36.972194+00:00"
+    }
+  ],
+  "jobs": [
+    {
+      "id": "8149468a-50ef-4bbd-9a73-384e8a4c32a1",
+      "employer_id": "b154ebc0-f400-4df8-90ac-e606fc6f98bb",
+      "title": "Software Engineer Intern",
+      "jd_text": "Software Engineer Intern (Java)\nJob Overview\nWe are looking for a motivated and detail-oriented Software Engineer Intern to join our development team. This role is designed for a student or recent graduate eager to apply their Java knowledge to real-world applications, contribute to scalable backend systems, and learn the full software development lifecycle (SDLC) in a professional environment.\n\nKey Responsibilities\nFeature Development: Assist in designing, coding, and testing new features for our core Java-based applications.\n\nBug Fixing: Debug existing codebases and resolve technical issues to ensure high performance and reliability.\n\nCode Reviews: Participate in peer code reviews to maintain high coding standards and learn best practices.\n\nCollaboration: Work closely with senior engineers, product managers, and QA teams to understand requirements and deliver technical solutions.\n\nDocumentation: Maintain clear and concise technical documentation for APIs and system architectures.\n\nRequired Skills & Qualifications\nCore Java: Strong understanding of Java fundamentals (OOPs concepts, Collections, Multithreading, and Exception Handling).\n\nFrameworks: Familiarity with Java frameworks such as Spring Boot or Hibernate is a significant plus.\n\nDatabases: Basic knowledge of SQL (PostgreSQL/MySQL) and understanding of relational database design.\n\nTools: Experience with Version Control Systems, specifically Git.\n\nProblem Solving: Solid understanding of Data Structures and Algorithms (DSA).\n\nEducation: Currently pursuing or recently completed a B.E./B.Tech/M.Tech in Computer Science, Information Technology, or a related field.\n\nPreferred Skills (Bonus)\nFamiliarity with RESTful APIs and Microservices architecture.\n\nBasic understanding of build tools like Maven or Gradle.\n\nKnowledge of cloud platforms (AWS/Azure/GCP) or containerization (Docker/Kubernetes).\n\nExperience with unit testing frameworks like JUnit or Mockito.\n\nWhy Join Us?\nMentorship: Work directly with experienced engineers who are committed to your professional growth.\n\nImpact: Contribute to live projects used by real customers.\n\nCulture: A collaborative, inclusive, and fast-paced environment that values innovation and curiosity.",
+      "created_at": "2026-04-13T20:13:45.323471+00:00"
+    }
+  ],
+  "rankings": {
+    "8149468a-50ef-4bbd-9a73-384e8a4c32a1": {
+      "job_id": "8149468a-50ef-4bbd-9a73-384e8a4c32a1",
+      "generated_by": "b154ebc0-f400-4df8-90ac-e606fc6f98bb",
+      "results": [
+        {
+          "candidate_name": "Vedank Wakalkar",
+          "jd_id": "e21e9bae00b1",
+          "resume_id": "e70ca146-af58-46f6-be9f-74c24b034bc7",
+          "raw_total_score": 34.3,
+          "total_score": 34.3,
+          "calibration_offset": 0.0,
+          "feedback_applied": false,
+          "breakdown": {
+            "skills": 23.9,
+            "experience": 39.0,
+            "education": 52.1,
+            "certifications": 26.0
+          },
+          "flag": "Does Not Meet Requirements",
+          "summary": "<think>\nOkay, let's tackle this. The user wants a concise hiring summary for resume screening. The candidate is Vedank Wakalkar, and the flag is \"Does Not Meet Requirements\" with a score of 34.3. \n\nFirst, I need to look at the job description requirements. The required skills include Java fundamentals like OOPs, Collections, Multithreading, Exception Handling. They also need to assist in designing, coding, testing, debugging, peer reviews, and collaboration with teams. Documentation is another key area. Preferred skills are Spring Boot, Hibernate, SQL, RESTful APIs, Microservices, Maven/Gradle, cloud/containerization.\n\nThe matched area is RESTful APIs. Missing areas are collaboration, documentation, core Java fundamentals, and the required skills for designing and coding. \n\nSo the summary should mention that Vedank doesn't meet the core requirements. Highlight the missing areas: Java fundamentals, collaboration, documentation. Also note the low score. Maybe mention the matched area briefly but focus on the gaps. Keep it 3-5 lines. Avoid markdown",
+          "matched_skills": [
+            "RESTful APIs"
+          ],
+          "missing_skills": [
+            "Collaboration: Work closely with senior engineers, product...",
+            "Documentation: Maintain clear and concise technical documentation...",
+            "Required Skills & Qualifications",
+            "Core Java: Strong understanding of Java fundamentals...",
+            "Required skill: Assist in designing",
+            "Required skill: coding",
+            "Required skill: testing new features for our...",
+            "Required skill: Debug existing codebases",
+            "Required skill: resolve technical issues to ensure...",
+            "Required skill: reliability",
+            "Required skill: Participate in peer code reviews...",
+            "Required skill: learn best practices",
+            "Required skill: Work closely with senior engineers...",
+            "Required skill: product managers",
+            "Required skill: QA teams to understand requirements...",
+            "Required skill: deliver technical solutions",
+            "Required skill: Maintain clear",
+            "Required skill: concise technical documentation for APIs...",
+            "Required skill: system architectures",
+            "Required skill: Required Skills & Qualifications",
+            "Required skill: Strong understanding of Java fundamentals...",
+            "Required skill: Collections",
+            "Required skill: Multithreading",
+            "Required skill: Exception Handling)"
+          ],
+          "is_shortlisted": false,
+          "rank": 1,
+          "resume_name": "Vedank_VIIT_Resume.pdf"
+        }
+      ],
+      "errors": [],
+      "generated_at": "2026-04-13T20:13:55.068984+00:00"
+    }
+  }
+}

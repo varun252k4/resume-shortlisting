@@ -3,6 +3,7 @@ Embedder — wraps fastembed for local, offline text embeddings.
 No API key required. Model is downloaded on first use (~130MB for bge-small).
 """
 import os
+from typing import Optional
 
 # Use HuggingFace mirror in case hf.co is blocked/throttled
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
@@ -11,7 +12,7 @@ from fastembed import TextEmbedding
 from config import EMBED_MODEL
 
 # Singleton — loaded once per process
-_model: TextEmbedding | None = None
+_model: Optional[TextEmbedding] = None
 
 
 def _get_model() -> TextEmbedding:

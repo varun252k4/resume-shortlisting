@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Optional
+from typing import Optional, Union
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -24,7 +24,7 @@ class WorkExperience(BaseModel):
 class Education(BaseModel):
     institution: str
     degree: str
-    year: Optional[str | int] = None
+    year: Optional[Union[str, int]] = None
 
 
 class ParsedResume(BaseModel):

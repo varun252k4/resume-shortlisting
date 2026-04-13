@@ -8,6 +8,7 @@ Responsibilities:
 - generate short candidate summary
 """
 from litellm import acompletion
+from typing import Optional
 
 from feedback_store import get_calibration
 from jd_parser import parse_job_description
@@ -49,9 +50,9 @@ def _build_summary_text(
 
 
 def _merge_requirements(
-    explicit: JDRequirements | None,
-    extracted: JDRequirements | None,
-) -> JDRequirements | None:
+    explicit: Optional[JDRequirements],
+    extracted: Optional[JDRequirements],
+) -> Optional[JDRequirements]:
     if explicit is None:
         return extracted
     if extracted is None:
@@ -118,9 +119,9 @@ def _apply_calibration(jd_id: str, raw_score: float) -> tuple[float, dict]:
 
 async def score_candidate(
     resume: ParsedResume,
-    jd_text: str | None,
+    jd_text: Optional[str],
     weightage: WeightageConfig,
-    requirements: JDRequirements | None = None,
+    requirements: Optional[JDRequirements] = None,
     use_ai_summary: bool = True,
     shortlist_threshold: float = 50.0,
 ) -> ScoreResult:

@@ -20,12 +20,21 @@ sys.path.insert(0, os.path.join(_ROOT, "scorer"))
 
 # ── Stdlib / third-party ──────────────────────────────────────────────────
 import asyncio
+import base64
+import hashlib
+import hmac
+import json
+import secrets
+import threading
 import time
+from datetime import datetime, timezone
 from uuid import uuid4
+from typing import Optional, Union
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import BaseModel, Field
 
 # ── Local modules (resolved via sys.path set above) ───────────────────────
 from feedback_store import add_feedback_record, get_calibration
@@ -69,6 +78,425 @@ app.add_middleware(
 
 ALLOWED_EXTENSIONS = {"pdf", "docx", "doc", "txt"}
 MAX_FILE_SIZE_MB = 10
+
+JWT_SECRET = os.getenv("JWT_SECRET", "replace-this-please")
+JWT_EXPIRES_MINUTES = int(os.getenv("JWT_EXPIRES_MINUTES", "1440"))
+AUTH_DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
+AUTH_DATA_FILE = os.path.join(AUTH_DATA_DIR, "app_store.json")
+AUTH_STORE_LOCK = threading.Lock()
+auth_scheme = HTTPBearer(auto_error=False)
+
+
+def _iso_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _default_auth_store() -> dict:
+    return {"users": [], "resumes": [], "jobs": [], "rankings": {}}
+
+
+def _load_auth_store() -> dict:
+    if not os.path.exists(AUTH_DATA_DIR):
+        os.makedirs(AUTH_DATA_DIR, exist_ok=True)
+
+    if not os.path.exists(AUTH_DATA_FILE):
+        _save_auth_store(_default_auth_store())
+
+    with open(AUTH_DATA_FILE, "r", encoding="utf-8") as fp:
+        try:
+            return json.load(fp)
+        except json.JSONDecodeError:
+            return _default_auth_store()
+
+
+def _save_auth_store(state: dict) -> None:
+    with AUTH_STORE_LOCK:
+        if not os.path.exists(AUTH_DATA_DIR):
+            os.makedirs(AUTH_DATA_DIR, exist_ok=True)
+        with open(AUTH_DATA_FILE, "w", encoding="utf-8") as fp:
+            json.dump(state, fp, indent=2)
+
+
+def _normalize_role(role: str) -> str:
+    normalized = (role or "").strip().lower()
+    if normalized in {"employee", "emp", "candidate"}:
+        return "candidate"
+    if normalized in {"employer", "recruiter"}:
+        return "employer"
+    if normalized == "admin":
+        return "admin"
+    raise ValueError("Invalid role. Use 'employee' or 'employer'.")
+
+
+def _hash_password(password: str) -> str:
+    salt = secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 120000)
+    return f"pbkdf2${salt}${digest.hex()}"
+
+
+def _verify_password(password: str, encoded: str) -> bool:
+    if not encoded or not encoded.startswith("pbkdf2$"):
+        return False
+    try:
+        _, salt, hash_hex = encoded.split("$", 2)
+    except ValueError:
+        return False
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 120000)
+    return hmac.compare_digest(hash_hex, digest.hex())
+
+
+def _b64url(data: Union[str, bytes]) -> str:
+    if isinstance(data, str):
+        data = data.encode("utf-8")
+    return base64.urlsafe_b64encode(data).decode("utf-8").rstrip("=")
+
+
+def _b64url_decode(value: str) -> bytes:
+    padding = "=" * ((4 - (len(value) % 4)) % 4)
+    return base64.urlsafe_b64decode((value + padding).encode("utf-8"))
+
+
+def _sign_message(message: str) -> str:
+    sig = hmac.new(JWT_SECRET.encode("utf-8"), message.encode("utf-8"), hashlib.sha256).digest()
+    return _b64url(sig)
+
+
+def _create_jwt(payload: dict) -> str:
+    now = int(time.time())
+    token_payload = {
+        "iss": "resume-shortlisting",
+        "iat": now,
+        "exp": now + (JWT_EXPIRES_MINUTES * 60),
+        **payload,
+    }
+    header = {"alg": "HS256", "typ": "JWT"}
+    encoded_header = _b64url(json.dumps(header, separators=(",", ":")))
+    encoded_payload = _b64url(json.dumps(token_payload, separators=(",", ":")))
+    signature = _sign_message(f"{encoded_header}.{encoded_payload}")
+    return f"{encoded_header}.{encoded_payload}.{signature}"
+
+
+def _decode_jwt(token: str) -> dict:
+    try:
+        encoded_header, encoded_payload, signature = token.split(".")
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail="Invalid token format.") from exc
+
+    expected = _sign_message(f"{encoded_header}.{encoded_payload}")
+    if not hmac.compare_digest(expected, signature):
+        raise HTTPException(status_code=401, detail="Invalid token signature.")
+
+    payload = json.loads(_b64url_decode(encoded_payload).decode("utf-8"))
+    if int(payload.get("exp", 0)) < int(time.time()):
+        raise HTTPException(status_code=401, detail="Token expired.")
+    return payload
+
+
+def _current_user_payload(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(auth_scheme),
+) -> dict:
+    if credentials is None:
+        raise HTTPException(status_code=401, detail="Authentication credentials are missing.")
+    return _decode_jwt(credentials.credentials)
+
+
+def _require_role(*roles: str):
+    allowed = set(roles)
+
+    def checker(payload: dict = Depends(_current_user_payload)) -> dict:
+        role = payload.get("role")
+        if role not in allowed:
+            raise HTTPException(status_code=403, detail="Insufficient permissions for this action.")
+        return payload
+
+    return checker
+
+
+def _sanitize_user(row: dict) -> dict:
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "email": row["email"],
+        "role": row["role"],
+    }
+
+
+class SignupInput(BaseModel):
+    name: str
+    email: str
+    password: str
+    role: str
+
+
+class SigninInput(BaseModel):
+    email: str
+    password: str
+
+
+class JobCreateInput(BaseModel):
+    title: str
+    jd_text: str
+
+
+class RankRequest(BaseModel):
+    resume_ids: list[str] = Field(default_factory=list)
+    requirements: Optional[JDRequirements] = None
+    weightage: WeightageConfig = WeightageConfig()
+    use_ai_summary: bool = True
+    shortlist_threshold: float = Field(default=50.0, ge=0, le=100)
+
+
+class AuthResponse(BaseModel):
+    success: bool
+    token: str
+    user: dict
+
+
+@app.middleware("http")
+async def jwt_context_middleware(request: Request, call_next):
+    request.state.jwt_user = None
+    auth = request.headers.get("authorization")
+    if auth and auth.lower().startswith("bearer "):
+        try:
+            request.state.jwt_user = _decode_jwt(auth.split(" ", 1)[1])
+        except HTTPException:
+            request.state.jwt_user = None
+    return await call_next(request)
+
+
+def _find_user(store: dict, user_id: str) -> Optional[dict]:
+    for user in store["users"]:
+        if user["id"] == user_id:
+            return user
+    return None
+
+
+def _find_user_by_email(store: dict, email: str) -> Optional[dict]:
+    lowered = email.lower()
+    for user in store["users"]:
+        if user["email"] == lowered:
+            return user
+    return None
+
+
+def _find_job(store: dict, job_id: str) -> Optional[dict]:
+    for job in store["jobs"]:
+        if job["id"] == job_id:
+            return job
+    return None
+
+
+def _make_token_payload(user: dict) -> tuple[str, dict]:
+    token = _create_jwt(
+        {
+            "sub": user["id"],
+            "name": user["name"],
+            "email": user["email"],
+            "role": user["role"],
+        },
+    )
+    return token, _sanitize_user(user)
+
+
+@app.post("/auth/signup", response_model=AuthResponse, tags=["Auth"])
+async def signup(payload: SignupInput):
+    role = _normalize_role(payload.role)
+    email = payload.email.strip().lower()
+
+    store = _load_auth_store()
+    if _find_user_by_email(store, email):
+        raise HTTPException(status_code=409, detail="Email already registered.")
+
+    user = {
+        "id": str(uuid4()),
+        "name": payload.name.strip(),
+        "email": email,
+        "password": _hash_password(payload.password),
+        "role": role,
+        "created_at": _iso_now(),
+    }
+    store["users"].append(user)
+    _save_auth_store(store)
+
+    token, public_user = _make_token_payload(user)
+    return AuthResponse(success=True, token=token, user=public_user)
+
+
+@app.post("/auth/login", response_model=AuthResponse, tags=["Auth"])
+async def login(payload: SigninInput):
+    store = _load_auth_store()
+    user = _find_user_by_email(store, payload.email.strip().lower())
+    if not user or not _verify_password(payload.password, user["password"]):
+        raise HTTPException(status_code=401, detail="Invalid credentials.")
+
+    token, public_user = _make_token_payload(user)
+    return AuthResponse(success=True, token=token, user=public_user)
+
+
+@app.post("/auth/signin", response_model=AuthResponse, tags=["Auth"])
+async def signin(payload: SigninInput):
+    return await login(payload)
+
+
+@app.get("/auth/me", tags=["Auth"])
+async def me(payload: dict = Depends(_current_user_payload)):
+    store = _load_auth_store()
+    user = _find_user(store, payload["sub"])
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid user.")
+    return {"success": True, "user": _sanitize_user(user)}
+
+
+@app.get("/candidate/resumes", tags=["Resumes"])
+async def list_candidate_resumes(user: dict = Depends(_current_user_payload)):
+    store = _load_auth_store()
+    all_resumes = store["resumes"]
+    if user["role"] == "candidate":
+        all_resumes = [item for item in all_resumes if item["user_id"] == user["sub"]]
+    return {"success": True, "resumes": all_resumes}
+
+
+@app.post("/candidate/resumes", tags=["Resumes"])
+async def upload_candidate_resumes(
+    files: list[UploadFile] = File(...),
+    user: dict = Depends(_require_role("candidate")),
+):
+    if not files:
+        raise HTTPException(status_code=400, detail="At least one resume file is required.")
+
+    added = []
+    failed = []
+    store = _load_auth_store()
+
+    for file in files:
+        parsed = await _parse_file(file.filename, await file.read())
+        if not parsed.success or not parsed.data:
+            failed.append(file.filename)
+            continue
+
+        resume_id = str(uuid4())
+        resume_record = {
+            "id": resume_id,
+            "user_id": user["sub"],
+            "candidate_name": parsed.data.name or file.filename,
+            "file_name": file.filename,
+            "parsed": parsed.data.model_dump(),
+            "uploaded_at": _iso_now(),
+        }
+        store["resumes"].append(resume_record)
+        added.append(resume_record)
+
+    _save_auth_store(store)
+    return {"success": True, "added": added, "failed": failed}
+
+
+@app.post("/employer/jobs", tags=["Recruitment"])
+async def create_job(payload: JobCreateInput, user: dict = Depends(_require_role("employer"))):
+    jd_text = (payload.jd_text or "").strip()
+    if not jd_text:
+        raise HTTPException(status_code=400, detail="JD text is required.")
+
+    store = _load_auth_store()
+    title = (payload.title or "Job Role").strip() or "Job Role"
+
+    job = {
+        "id": str(uuid4()),
+        "employer_id": user["sub"],
+        "title": title,
+        "jd_text": jd_text,
+        "created_at": _iso_now(),
+    }
+    store["jobs"].append(job)
+    _save_auth_store(store)
+    return {"success": True, "job": job}
+
+
+@app.get("/employer/jobs", tags=["Recruitment"])
+async def list_jobs(user: dict = Depends(_require_role("employer"))):
+    store = _load_auth_store()
+    jobs = [job for job in store["jobs"] if job["employer_id"] == user["sub"]]
+    return {"success": True, "jobs": jobs}
+
+
+@app.post("/employer/jobs/{job_id}/rank", tags=["Recruitment"])
+async def rank_job(job_id: str, payload: RankRequest, user: dict = Depends(_require_role("employer"))):
+    store = _load_auth_store()
+    job = _find_job(store, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+
+    if job["employer_id"] != user["sub"] and user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="You can only rank resumes for your own jobs.")
+
+    available_resumes = store["resumes"]
+    requested_ids = set(payload.resume_ids)
+    if requested_ids:
+        available_resumes = [resume for resume in available_resumes if resume["id"] in requested_ids]
+
+    if not available_resumes:
+        return {
+            "success": False,
+            "job_id": job_id,
+            "results": [],
+            "errors": ["No resumes available for ranking."],
+        }
+
+    async def _score_one(record: dict):
+        parsed = ParsedResume(**record["parsed"])
+        result = await score_candidate(
+            parsed,
+            job["jd_text"],
+            payload.weightage,
+            requirements=payload.requirements,
+            use_ai_summary=payload.use_ai_summary,
+            shortlist_threshold=payload.shortlist_threshold,
+        )
+        output = result.model_dump()
+        output["resume_id"] = record["id"]
+        output["resume_name"] = record.get("file_name")
+        return output
+
+    scored = await asyncio.gather(*[_score_one(r) for r in available_resumes], return_exceptions=True)
+    output_scores = []
+    errors = []
+
+    for result in scored:
+        if isinstance(result, Exception):
+            errors.append(str(result))
+            continue
+        output_scores.append(result)
+
+    output_scores.sort(key=lambda r: r.get("total_score", 0), reverse=True)
+    for idx, item in enumerate(output_scores, start=1):
+        item["rank"] = idx
+
+    store["rankings"][job_id] = {
+        "job_id": job_id,
+        "generated_by": user["sub"],
+        "results": output_scores,
+        "errors": errors,
+        "generated_at": _iso_now(),
+    }
+    _save_auth_store(store)
+
+    return {"success": True, "job_id": job_id, "results": output_scores, "errors": errors}
+
+
+@app.get("/employer/jobs/{job_id}/rankings", tags=["Recruitment"])
+async def get_job_rankings(job_id: str, user: dict = Depends(_require_role("employer"))):
+    store = _load_auth_store()
+    job = _find_job(store, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+
+    ranking = store["rankings"].get(job_id)
+    if not ranking:
+        return {"success": False, "job_id": job_id, "results": []}
+
+    if ranking.get("generated_by") and ranking["generated_by"] != user["sub"] and user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="You can only view rankings for your own jobs.")
+
+    return {"success": True, "job_id": job_id, "results": ranking["results"], "errors": ranking.get("errors", [])}
 
 
 # ── Health ─────────────────────────────────────────────────────────────────
