@@ -34,10 +34,13 @@ from models import (
     ContactInfo,
     Education,
     FeedbackRequest,
+    JDRequirements,
     ParsedResume,
     ParseResponse,
     ScoreRequest,
     ScoreResponse,
+    ShortlistBatchResponse,
+    ShortlistCandidate,
     WeightageConfig,
     WorkExperience,
 )
@@ -140,6 +143,116 @@ async def parse_batch(files: list[UploadFile] = File(...)):
         raise HTTPException(status_code=400, detail="Maximum 500 resumes per batch.")
     payloads = [(f.filename, await f.read()) for f in files]
     return list(await asyncio.gather(*[_parse_file(fn, fb) for fn, fb in payloads]))
+
+
+# ── End-to-end Batch Shortlisting ─────────────────────────────────────────
+
+
+@app.post("/shortlist/batch", response_model=ShortlistBatchResponse, tags=["Shortlisting"])
+async def shortlist_batch(
+    files: list[UploadFile] = File(...),
+    jd_text: str = File(...),
+    weightage_skills: float = File(default=0.40),
+    weightage_experience: float = File(default=0.30),
+    weightage_education: float = File(default=0.20),
+    weightage_certifications: float = File(default=0.10),
+    shortlist_threshold: float = File(default=50.0),
+    use_ai_summary: bool = File(default=False),
+):
+    """
+    **Single-call batch shortlisting.**
+
+    Upload up to 500 resume files together with a Job Description and get back
+    ranked, scored, and flagged candidates in one operation.
+
+    Steps performed internally:
+    1. Parse every resume concurrently (PDF / DOCX / TXT).
+    2. Score each parsed resume against the JD using vector similarity.
+    3. Apply custom weightage, calibration, and shortlist threshold.
+    4. Return results sorted by score descending with rank assigned.
+
+    Form fields:
+    - `files` — one or more resume files (multi-file upload)
+    - `jd_text` — raw Job Description text
+    - `weightage_*` — optional per-dimension weights (must sum to 1.0)
+    - `shortlist_threshold` — minimum score to mark `is_shortlisted=True` (default 50)
+    - `use_ai_summary` — generate LLM narrative summaries (default false for speed)
+    """
+    if len(files) > 500:
+        raise HTTPException(status_code=400, detail="Maximum 500 resumes per batch.")
+    if not jd_text or not jd_text.strip():
+        raise HTTPException(status_code=400, detail="jd_text must not be empty.")
+
+    try:
+        weightage = WeightageConfig(
+            skills=weightage_skills,
+            experience=weightage_experience,
+            education=weightage_education,
+            certifications=weightage_certifications,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    payloads = [(f.filename, await f.read()) for f in files]
+
+    async def _process_one(filename: str, file_bytes: bytes) -> ShortlistCandidate:
+        t = time.time()
+        parse_result = await _parse_file(filename, file_bytes)
+        if not parse_result.success or parse_result.data is None:
+            return ShortlistCandidate(
+                filename=filename,
+                parse_success=False,
+                parse_error=parse_result.error,
+                score_success=False,
+                total_time_seconds=round(time.time() - t, 2),
+            )
+        try:
+            score_result = await score_candidate(
+                parse_result.data,
+                jd_text,
+                weightage,
+                requirements=None,
+                use_ai_summary=use_ai_summary,
+                shortlist_threshold=shortlist_threshold,
+            )
+            return ShortlistCandidate(
+                filename=filename,
+                parse_success=True,
+                score_success=True,
+                parsed_resume=parse_result.data,
+                result=score_result,
+                total_time_seconds=round(time.time() - t, 2),
+            )
+        except Exception as exc:
+            return ShortlistCandidate(
+                filename=filename,
+                parse_success=True,
+                score_success=False,
+                score_error=str(exc),
+                parsed_resume=parse_result.data,
+                total_time_seconds=round(time.time() - t, 2),
+            )
+
+    candidates = list(await asyncio.gather(*[_process_one(fn, fb) for fn, fb in payloads]))
+
+    # Sort successfully scored candidates by score descending; failed ones go last
+    candidates.sort(
+        key=lambda c: c.result.total_score if c.score_success and c.result else -1,
+        reverse=True,
+    )
+    for rank, candidate in enumerate(candidates, start=1):
+        if candidate.score_success and candidate.result:
+            candidate.result.rank = rank
+
+    shortlisted_count = sum(
+        1 for c in candidates
+        if c.score_success and c.result and c.result.is_shortlisted
+    )
+    return ShortlistBatchResponse(
+        total=len(candidates),
+        shortlisted=shortlisted_count,
+        candidates=candidates,
+    )
 
 
 # ── Scoring ────────────────────────────────────────────────────────────────

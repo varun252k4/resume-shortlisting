@@ -179,6 +179,24 @@ class ScoreResponse(BaseModel):
     score_time_seconds: Optional[float] = None
 
 
+class ShortlistCandidate(BaseModel):
+    """Single candidate result from an end-to-end shortlist batch."""
+    filename: str
+    parse_success: bool
+    parse_error: Optional[str] = None
+    score_success: bool = False
+    score_error: Optional[str] = None
+    parsed_resume: Optional[ParsedResume] = None
+    result: Optional[ScoreResult] = None
+    total_time_seconds: Optional[float] = None
+
+
+class ShortlistBatchResponse(BaseModel):
+    total: int
+    shortlisted: int
+    candidates: list[ShortlistCandidate]
+
+
 class FeedbackRequest(BaseModel):
     jd_text: Optional[str] = None
     jd_id: Optional[str] = None

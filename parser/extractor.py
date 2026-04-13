@@ -9,6 +9,9 @@ JSON_MODE_PROVIDERS = ("groq/", "openai/", "azure/", "mistral/")
 
 EXTRACTION_PROMPT = """You are a resume parser. Extract structured information from the resume text below.
 
+Bias-awareness rule: Do NOT infer or record gender, age, ethnicity, nationality, religion, marital status,
+or any other protected characteristic. Extract only professional and educational facts.
+
 Return ONLY a valid JSON object with this exact structure (no markdown, no explanation):
 {{
   "name": "Full Name or null",
