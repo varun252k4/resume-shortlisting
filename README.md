@@ -1,118 +1,185 @@
 # Resume Shortlisting
 
-An AI-powered resume parser API that extracts structured data from PDF, DOCX, and TXT resumes using an LLM backend.
+AI resume shortlisting system with:
+
+- Resume upload + structured parsing (PDF / DOCX / TXT)
+- JD analysis from free-text
+- Weighted scoring (0–100) and ranking
+- Match flagging (`Strong Match`, `Moderate Match`, `Does Not Meet Requirements`)
+- Resume shortlist thresholding
+- Employer feedback loop for calibration
 
 ---
 
-## Requirements
+## Prerequisites
 
-- [Python 3.13+](https://www.python.org/downloads/)
-- [uv](https://docs.astral.sh/uv/getting-started/installation/) — fast Python package manager
-- An LLM API key (Groq, OpenAI, Anthropic, Mistral, or Ollama locally)
+- Python 3.9+ (3.13 recommended)
+- Git
+- An LLM API key for resume extraction / optional summaries (Groq, OpenAI, etc.)
 
 ---
 
 ## Setup
 
-### 1. Clone the repo
+1. Clone and enter the repo:
 
 ```bash
 git clone https://github.com/varun252k4/resume-shortlisting.git
 cd resume-shortlisting
 ```
 
-### 2. Create and activate the virtual environment
+2. Create and activate a virtual environment:
 
 ```bash
-uv venv
+python3 -m venv .venv
+source .venv/bin/activate
 ```
 
-Activate it:
-
-- **Windows (PowerShell)**
-  ```powershell
-  .venv\Scripts\Activate.ps1
-  ```
-- **Windows (CMD)**
-  ```cmd
-  .venv\Scripts\activate.bat
-  ```
-- **macOS / Linux**
-  ```bash
-  source .venv/bin/activate
-  ```
-
-### 3. Install dependencies
+3. Install dependencies:
 
 ```bash
-uv sync
+python3 -m pip install --upgrade pip
+python3 -m pip install -r requirements.txt
 ```
 
-### 4. Configure your LLM
-
-Copy `.env.example` to `.env` (or create `.env`) and set your provider:
+4. Configure `.env`:
 
 ```env
-# Groq (default)
-LLM_MODEL=groq/llama3-70b-8192
-LLM_API_KEY=your_groq_api_key
-
-# OpenAI
-# LLM_MODEL=openai/gpt-4o
-# LLM_API_KEY=your_openai_api_key
-
-# Anthropic
-# LLM_MODEL=anthropic/claude-sonnet-4-20250514
-# LLM_API_KEY=your_anthropic_api_key
-```
-I use Groq for the LLM backend.
 LLM_MODEL=groq/qwen/qwen3-32b
----
-
-## Running the Parser API
-
-Start the FastAPI server:
-
-```bash
-cd parser
-uvicorn main:app --reload
+LLM_API_KEY=your_llm_api_key
+CHROMA_PATH=./chroma_db
+EMBED_MODEL=BAAI/bge-small-en-v1.5
 ```
 
-The API will be available at `http://localhost:8000`.
-
-### API Endpoints
-
-| Method | Endpoint        | Description                        |
-|--------|-----------------|------------------------------------|
-| GET    | `/health`       | Health check                       |
-| POST   | `/parse`        | Parse a single resume file         |
-| POST   | `/parse/batch`  | Parse up to 500 resumes at once    |
-
-Interactive docs: `http://localhost:8000/docs`
-
-### Example — parse a single resume
-
-```bash
-curl -X POST http://localhost:8000/parse \
-  -F "file=@/path/to/resume.pdf"
-```
+> Replace `your_llm_api_key` with your real key.  
+> Keep keys out of shared logs/screenshots.
 
 ---
 
-## Quick Test Script
+## APIs in this repo
 
-To test the parser directly (no server needed):
+This project exposes two apps:
+
+1. `resume_parser` (parser-only service)
+2. `scorer` (parser + scoring + feedback service)
+
+You can run either one based on your use case.
+
+### Option A: Run full scoring app (recommended)
+
+Includes parse + scoring endpoints.
 
 ```bash
-python test.py
+python3 -m uvicorn scorer.main:app --reload --port 8000
 ```
 
-This extracts text from `Varun_Vangar_Resume.pdf` and prints the structured JSON output.
+Open in browser:
+
+```
+http://127.0.0.1:8000/docs
+```
+
+### Option B: Run parser-only app
+
+If you only need extraction:
+
+```bash
+python3 -m uvicorn resume_parser.main:app --reload --port 8010
+```
+
+Docs:
+
+```
+http://127.0.0.1:8010/docs
+```
 
 ---
 
-## Supported File Types
+## Parsing API (parser endpoints)
+
+Used by both parser and scorer apps in this codebase.
+
+### Health
+
+- `GET /health`
+
+### Parse one resume
+
+- `POST /parse`
+- `multipart/form-data` field name: `file`
+- Max: PDF / DOCX / DOC / TXT
+
+Example:
+
+```bash
+curl -X POST http://127.0.0.1:8000/parse \
+  -F "file=@/Users/vedank.wakalkar/Desktop/College_Work/resume-shortlisting/Vedank_VIIT_Resume.pdf"
+```
+
+### Parse batch
+
+- `POST /parse/batch`
+- File input: `files`
+- Supports up to 500 resumes in one request
+
+---
+
+## Scoring API (in `scorer.main`)
+
+### Score one candidate
+
+- `POST /score`
+- Body includes:
+  - `resume` (parsed resume JSON)
+  - `jd_text` or `requirements`
+  - optional `weightage`
+  - optional `shortlist_threshold`
+  - optional `use_ai_summary`
+
+### Score multiple candidates
+
+- `POST /score/batch`
+- Same payload as above, but with `resumes: [...]`
+- Returns ranked list (adds `rank`), sorted by score desc.
+
+### JD helper
+
+- `POST /jd/analyze` (body: `{ "jd_text": "..." }`)  
+  returns extracted structured requirements.
+
+### Feedback loop
+
+- `POST /feedback` with `FeedbackRequest`
+- `GET /feedback/status/{jd_id}`
+
+---
+
+## Quick Troubleshooting
+
+If you see `Errno 48: Address already in use`:
+
+```bash
+lsof -iTCP:8000 -sTCP:LISTEN -n -P
+kill <PID>
+```
+
+or use a different port:
+
+```bash
+python3 -m uvicorn scorer.main:app --reload --port 8001
+```
+
+---
+
+## Supported file types
 
 - PDF (`.pdf`)
-- Word Document (`.docx`, `.doc`)
-- Plain Text (`.txt`)
+- Word (`.docx`, `.doc`)
+- Text (`.txt`)
+
+---
+
+## Notes
+
+- ChromaDB data is stored in `chroma_db/`.
+- This project supports up to 500 resumes in batch endpoints.

@@ -8,10 +8,11 @@ import os
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 
 from fastembed import TextEmbedding
-from config import EMBED_MODEL
+from scorer.config import EMBED_MODEL
+from typing import Optional
 
 # Singleton — loaded once per process
-_model: TextEmbedding | None = None
+_model: Optional[TextEmbedding] = None
 
 
 def _get_model() -> TextEmbedding:

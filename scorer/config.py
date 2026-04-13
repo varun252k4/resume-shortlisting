@@ -1,8 +1,9 @@
 import os
+from typing import Optional
 
 # ── LLM (used only for 1-call summary per candidate) ──────────────────────
 LLM_MODEL: str = os.getenv("LLM_MODEL", "groq/llama3-70b-8192")
-LLM_API_KEY: str | None = os.getenv("LLM_API_KEY")
+LLM_API_KEY: Optional[str] = os.getenv("LLM_API_KEY")
 MAX_TOKENS: int = int(os.getenv("LLM_MAX_TOKENS", "2500"))
 
 # ── ChromaDB (local persistent vector store) ───────────────────────────────
