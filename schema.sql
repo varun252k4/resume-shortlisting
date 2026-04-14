@@ -238,3 +238,109 @@ CREATE INDEX IF NOT EXISTS idx_applications_job_id  ON applications(job_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_employer_id     ON jobs(employer_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_status          ON jobs(status);
 
+-- ==========================================================
+--  AI Resume Shortlisting — additional tables
+--  These are used by the FastAPI scoring service (main.py).
+--  They do NOT conflict with the job portal tables above.
+-- ==========================================================
+
+-- ── AI SERVICE USERS ───────────────────────────────────────
+-- Mirrors the auth layer in main.py (UUID primary key to match
+-- the existing string-based id format used in JWTs).
+CREATE TABLE IF NOT EXISTS ai_users (
+  id          TEXT PRIMARY KEY,
+  name        TEXT        NOT NULL,
+  email       TEXT UNIQUE NOT NULL,
+  password    TEXT        NOT NULL,
+  role        TEXT        NOT NULL CHECK (role IN ('candidate', 'employer', 'admin')),
+  created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ── AI FEEDBACK ────────────────────────────────────────────
+-- Raw employer corrections submitted via POST /feedback.
+CREATE TABLE IF NOT EXISTS ai_feedback (
+  id                   UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  jd_id                TEXT        NOT NULL,
+  resume_id            TEXT,
+  resume_name          TEXT,
+  ai_total_score       FLOAT       NOT NULL DEFAULT 0,
+  employer_total_score FLOAT       NOT NULL DEFAULT 0,
+  ai_flag              TEXT,
+  employer_flag        TEXT,
+  created_at           TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_feedback_jd_id ON ai_feedback(jd_id);
+
+-- ── AI JOB CALIBRATION ─────────────────────────────────────
+-- Per-JD aggregated calibration state (recomputed on each feedback).
+CREATE TABLE IF NOT EXISTS ai_job_calibration (
+  jd_id                  TEXT        PRIMARY KEY,
+  feedback_count         INT         NOT NULL DEFAULT 0,
+  feedback_alignment_pct FLOAT       NOT NULL DEFAULT 100.0,
+  calibration_offset     FLOAT       NOT NULL DEFAULT 0.0,
+  last_recalibrated_at   TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ── AI SERVICE JOBS ────────────────────────────────────────
+-- Job postings created via the AI scoring service.
+CREATE TABLE IF NOT EXISTS ai_service_jobs (
+  id          TEXT PRIMARY KEY,
+  employer_id TEXT NOT NULL,
+  title       TEXT NOT NULL,
+  jd_text     TEXT NOT NULL,
+  created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_service_jobs_employer ON ai_service_jobs(employer_id);
+
+-- ── AI SERVICE RESUMES ─────────────────────────────────────
+-- Parsed resumes uploaded by candidates.
+CREATE TABLE IF NOT EXISTS ai_service_resumes (
+  id             TEXT        PRIMARY KEY,
+  user_id        TEXT        NOT NULL,
+  candidate_name TEXT,
+  file_name      TEXT,
+  parsed         JSONB       NOT NULL DEFAULT '{}',
+  uploaded_at    TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_service_resumes_user ON ai_service_resumes(user_id);
+
+-- ── AI SERVICE RANKINGS ────────────────────────────────────
+-- AI-generated ranking results, one row per job.
+CREATE TABLE IF NOT EXISTS ai_service_rankings (
+  job_id       TEXT        PRIMARY KEY,
+  generated_by TEXT,
+  results      JSONB       NOT NULL DEFAULT '[]',
+  errors       JSONB       NOT NULL DEFAULT '[]',
+  generated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ── VECTOR STORE: JD CHUNKS ────────────────────────────────
+-- JD text chunks with their float4 embeddings.
+-- No pgvector extension required; cosine similarity computed in Python.
+CREATE TABLE IF NOT EXISTS jd_chunks (
+  jd_hash     TEXT    NOT NULL,
+  chunk_index INT     NOT NULL,
+  content     TEXT    NOT NULL,
+  embedding   FLOAT4[] NOT NULL,
+  weight      FLOAT4  NOT NULL DEFAULT 0.8,
+  PRIMARY KEY (jd_hash, chunk_index)
+);
+
+CREATE INDEX IF NOT EXISTS idx_jd_chunks_hash ON jd_chunks(jd_hash);
+
+-- ── VECTOR STORE: RESUME CHUNKS ────────────────────────────
+-- Resume field embeddings, re-indexed on each upload.
+CREATE TABLE IF NOT EXISTS resume_chunks (
+  resume_hash TEXT    NOT NULL,
+  chunk_index INT     NOT NULL,
+  content     TEXT    NOT NULL,
+  embedding   FLOAT4[] NOT NULL,
+  category    TEXT    NOT NULL DEFAULT 'skill',
+  PRIMARY KEY (resume_hash, chunk_index)
+);
+
+CREATE INDEX IF NOT EXISTS idx_resume_chunks_hash ON resume_chunks(resume_hash);
+

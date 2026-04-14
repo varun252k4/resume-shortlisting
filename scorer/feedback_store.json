@@ -1,0 +1,24 @@
+{
+  "entries": [
+    {
+      "feedback_id": null,
+      "jd_id": "1cc2b03b841f",
+      "resume_id": "1e025bd5569cf576",
+      "resume_name": "Demo Candidate",
+      "ai_total_score": 56.0,
+      "ai_flag": "Moderate Match",
+      "employer_total_score": 68.0,
+      "employer_flag": "Strong Match",
+      "created_at": "2026-04-14T09:02:03.025284+00:00",
+      "notes": "Evaluator confirmed stronger fit than AI suggested."
+    }
+  ],
+  "job_calibration": {
+    "1cc2b03b841f": {
+      "feedback_count": 1,
+      "feedback_alignment_pct": 0.0,
+      "calibration_offset": 12.0,
+      "last_recalibrated_at": "2026-04-14T09:02:03.025284+00:00"
+    }
+  }
+}

@@ -20,13 +20,14 @@ sys.path.insert(0, os.path.join(_ROOT, "scorer"))
 
 # ── Stdlib / third-party ──────────────────────────────────────────────────
 import asyncio
+import asyncpg
 import base64
 import hashlib
 import hmac
 import json
 import secrets
-import threading
 import time
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from uuid import uuid4
 from typing import Optional, Union
@@ -57,8 +58,17 @@ from parser import clean_text, extract_raw_text  # parser/parser.py
 from extractor import extract_fields              # parser/extractor.py
 from scorer import score_candidate               # scorer/scorer.py
 from jd_parser import parse_job_description      # scorer/jd_parser.py
+from config import POSTGRES_DSN
+from db_postgres import close_postgres, get_pool, init_postgres
 
 # ── App ────────────────────────────────────────────────────────────────────
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    await init_postgres(POSTGRES_DSN)
+    yield
+    await close_postgres()
+
 
 app = FastAPI(
     title="AI Resume Screening API",
@@ -67,6 +77,7 @@ app = FastAPI(
         "against a Job Description, and shortlist at scale."
     ),
     version="1.0.0",
+    lifespan=_lifespan,
 )
 
 app.add_middleware(
@@ -81,40 +92,11 @@ MAX_FILE_SIZE_MB = 10
 
 JWT_SECRET = os.getenv("JWT_SECRET", "replace-this-please")
 JWT_EXPIRES_MINUTES = int(os.getenv("JWT_EXPIRES_MINUTES", "1440"))
-AUTH_DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
-AUTH_DATA_FILE = os.path.join(AUTH_DATA_DIR, "app_store.json")
-AUTH_STORE_LOCK = threading.Lock()
 auth_scheme = HTTPBearer(auto_error=False)
 
 
 def _iso_now() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-def _default_auth_store() -> dict:
-    return {"users": [], "resumes": [], "jobs": [], "rankings": {}}
-
-
-def _load_auth_store() -> dict:
-    if not os.path.exists(AUTH_DATA_DIR):
-        os.makedirs(AUTH_DATA_DIR, exist_ok=True)
-
-    if not os.path.exists(AUTH_DATA_FILE):
-        _save_auth_store(_default_auth_store())
-
-    with open(AUTH_DATA_FILE, "r", encoding="utf-8") as fp:
-        try:
-            return json.load(fp)
-        except json.JSONDecodeError:
-            return _default_auth_store()
-
-
-def _save_auth_store(state: dict) -> None:
-    with AUTH_STORE_LOCK:
-        if not os.path.exists(AUTH_DATA_DIR):
-            os.makedirs(AUTH_DATA_DIR, exist_ok=True)
-        with open(AUTH_DATA_FILE, "w", encoding="utf-8") as fp:
-            json.dump(state, fp, indent=2)
 
 
 def _normalize_role(role: str) -> str:
@@ -264,26 +246,32 @@ async def jwt_context_middleware(request: Request, call_next):
     return await call_next(request)
 
 
-def _find_user(store: dict, user_id: str) -> Optional[dict]:
-    for user in store["users"]:
-        if user["id"] == user_id:
-            return user
-    return None
+async def _find_user(user_id: str) -> Optional[dict]:
+    row = await get_pool().fetchrow(
+        "SELECT id, name, email, role FROM ai_users WHERE id = $1", user_id
+    )
+    return dict(row) if row else None
 
 
-def _find_user_by_email(store: dict, email: str) -> Optional[dict]:
-    lowered = email.lower()
-    for user in store["users"]:
-        if user["email"] == lowered:
-            return user
-    return None
+async def _find_user_by_email(email: str) -> Optional[dict]:
+    row = await get_pool().fetchrow(
+        "SELECT id, name, email, password, role FROM ai_users WHERE email = $1",
+        email.lower(),
+    )
+    return dict(row) if row else None
 
 
-def _find_job(store: dict, job_id: str) -> Optional[dict]:
-    for job in store["jobs"]:
-        if job["id"] == job_id:
-            return job
-    return None
+async def _find_job(job_id: str) -> Optional[dict]:
+    row = await get_pool().fetchrow(
+        "SELECT id, employer_id, title, jd_text, created_at FROM ai_service_jobs WHERE id = $1",
+        job_id,
+    )
+    if row is None:
+        return None
+    r = dict(row)
+    if hasattr(r.get("created_at"), "isoformat"):
+        r["created_at"] = r["created_at"].isoformat()
+    return r
 
 
 def _make_token_payload(user: dict) -> tuple[str, dict]:
@@ -303,29 +291,28 @@ async def signup(payload: SignupInput):
     role = _normalize_role(payload.role)
     email = payload.email.strip().lower()
 
-    store = _load_auth_store()
-    if _find_user_by_email(store, email):
+    if await _find_user_by_email(email):
         raise HTTPException(status_code=409, detail="Email already registered.")
 
-    user = {
-        "id": str(uuid4()),
-        "name": payload.name.strip(),
-        "email": email,
-        "password": _hash_password(payload.password),
-        "role": role,
-        "created_at": _iso_now(),
-    }
-    store["users"].append(user)
-    _save_auth_store(store)
+    user_id = str(uuid4())
+    name = payload.name.strip()
+    hashed = _hash_password(payload.password)
+    try:
+        await get_pool().execute(
+            "INSERT INTO ai_users (id, name, email, password, role) VALUES ($1, $2, $3, $4, $5)",
+            user_id, name, email, hashed, role,
+        )
+    except asyncpg.UniqueViolationError:
+        raise HTTPException(status_code=409, detail="Email already registered.")
 
+    user = {"id": user_id, "name": name, "email": email, "role": role}
     token, public_user = _make_token_payload(user)
     return AuthResponse(success=True, token=token, user=public_user)
 
 
 @app.post("/auth/login", response_model=AuthResponse, tags=["Auth"])
 async def login(payload: SigninInput):
-    store = _load_auth_store()
-    user = _find_user_by_email(store, payload.email.strip().lower())
+    user = await _find_user_by_email(payload.email.strip().lower())
     if not user or not _verify_password(payload.password, user["password"]):
         raise HTTPException(status_code=401, detail="Invalid credentials.")
 
@@ -340,8 +327,7 @@ async def signin(payload: SigninInput):
 
 @app.get("/auth/me", tags=["Auth"])
 async def me(payload: dict = Depends(_current_user_payload)):
-    store = _load_auth_store()
-    user = _find_user(store, payload["sub"])
+    user = await _find_user(payload["sub"])
     if not user:
         raise HTTPException(status_code=401, detail="Invalid user.")
     return {"success": True, "user": _sanitize_user(user)}
@@ -349,11 +335,23 @@ async def me(payload: dict = Depends(_current_user_payload)):
 
 @app.get("/candidate/resumes", tags=["Resumes"])
 async def list_candidate_resumes(user: dict = Depends(_current_user_payload)):
-    store = _load_auth_store()
-    all_resumes = store["resumes"]
     if user["role"] == "candidate":
-        all_resumes = [item for item in all_resumes if item["user_id"] == user["sub"]]
-    return {"success": True, "resumes": all_resumes}
+        rows = await get_pool().fetch(
+            "SELECT id, user_id, candidate_name, file_name, parsed, uploaded_at "
+            "FROM ai_service_resumes WHERE user_id = $1",
+            user["sub"],
+        )
+    else:
+        rows = await get_pool().fetch(
+            "SELECT id, user_id, candidate_name, file_name, parsed, uploaded_at FROM ai_service_resumes"
+        )
+    resumes = []
+    for r in rows:
+        rec = dict(r)
+        if hasattr(rec.get("uploaded_at"), "isoformat"):
+            rec["uploaded_at"] = rec["uploaded_at"].isoformat()
+        resumes.append(rec)
+    return {"success": True, "resumes": resumes}
 
 
 @app.post("/candidate/resumes", tags=["Resumes"])
@@ -366,7 +364,6 @@ async def upload_candidate_resumes(
 
     added = []
     failed = []
-    store = _load_auth_store()
 
     for file in files:
         parsed = await _parse_file(file.filename, await file.read())
@@ -374,19 +371,27 @@ async def upload_candidate_resumes(
             failed.append(file.filename)
             continue
 
-        resume_id = str(uuid4())
         resume_record = {
-            "id": resume_id,
+            "id": str(uuid4()),
             "user_id": user["sub"],
             "candidate_name": parsed.data.name or file.filename,
             "file_name": file.filename,
             "parsed": parsed.data.model_dump(),
             "uploaded_at": _iso_now(),
         }
-        store["resumes"].append(resume_record)
+        await get_pool().execute(
+            """
+            INSERT INTO ai_service_resumes (id, user_id, candidate_name, file_name, parsed)
+            VALUES ($1, $2, $3, $4, $5::jsonb)
+            """,
+            resume_record["id"],
+            resume_record["user_id"],
+            resume_record["candidate_name"],
+            resume_record["file_name"],
+            json.dumps(resume_record["parsed"]),
+        )
         added.append(resume_record)
 
-    _save_auth_store(store)
     return {"success": True, "added": added, "failed": failed}
 
 
@@ -396,42 +401,50 @@ async def create_job(payload: JobCreateInput, user: dict = Depends(_require_role
     if not jd_text:
         raise HTTPException(status_code=400, detail="JD text is required.")
 
-    store = _load_auth_store()
-    title = (payload.title or "Job Role").strip() or "Job Role"
-
-    job = {
-        "id": str(uuid4()),
-        "employer_id": user["sub"],
-        "title": title,
-        "jd_text": jd_text,
-        "created_at": _iso_now(),
-    }
-    store["jobs"].append(job)
-    _save_auth_store(store)
-    return {"success": True, "job": job}
+    title  = (payload.title or "Job Role").strip() or "Job Role"
+    job_id = str(uuid4())
+    await get_pool().execute(
+        "INSERT INTO ai_service_jobs (id, employer_id, title, jd_text) VALUES ($1, $2, $3, $4)",
+        job_id, user["sub"], title, jd_text,
+    )
+    return {"success": True, "job": {"id": job_id, "employer_id": user["sub"], "title": title, "jd_text": jd_text}}
 
 
 @app.get("/employer/jobs", tags=["Recruitment"])
 async def list_jobs(user: dict = Depends(_require_role("employer"))):
-    store = _load_auth_store()
-    jobs = [job for job in store["jobs"] if job["employer_id"] == user["sub"]]
+    rows = await get_pool().fetch(
+        "SELECT id, employer_id, title, jd_text, created_at FROM ai_service_jobs WHERE employer_id = $1",
+        user["sub"],
+    )
+    jobs = []
+    for r in rows:
+        rec = dict(r)
+        if hasattr(rec.get("created_at"), "isoformat"):
+            rec["created_at"] = rec["created_at"].isoformat()
+        jobs.append(rec)
     return {"success": True, "jobs": jobs}
 
 
 @app.post("/employer/jobs/{job_id}/rank", tags=["Recruitment"])
 async def rank_job(job_id: str, payload: RankRequest, user: dict = Depends(_require_role("employer"))):
-    store = _load_auth_store()
-    job = _find_job(store, job_id)
+    job = await _find_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found.")
 
     if job["employer_id"] != user["sub"] and user["role"] != "admin":
         raise HTTPException(status_code=403, detail="You can only rank resumes for your own jobs.")
 
-    available_resumes = store["resumes"]
-    requested_ids = set(payload.resume_ids)
-    if requested_ids:
-        available_resumes = [resume for resume in available_resumes if resume["id"] in requested_ids]
+    if payload.resume_ids:
+        rows = await get_pool().fetch(
+            "SELECT id, user_id, candidate_name, file_name, parsed FROM ai_service_resumes "
+            "WHERE id = ANY($1::text[])",
+            payload.resume_ids,
+        )
+    else:
+        rows = await get_pool().fetch(
+            "SELECT id, user_id, candidate_name, file_name, parsed FROM ai_service_resumes"
+        )
+    available_resumes = [dict(r) for r in rows]
 
     if not available_resumes:
         return {
@@ -470,33 +483,45 @@ async def rank_job(job_id: str, payload: RankRequest, user: dict = Depends(_requ
     for idx, item in enumerate(output_scores, start=1):
         item["rank"] = idx
 
-    store["rankings"][job_id] = {
-        "job_id": job_id,
-        "generated_by": user["sub"],
-        "results": output_scores,
-        "errors": errors,
-        "generated_at": _iso_now(),
-    }
-    _save_auth_store(store)
+    await get_pool().execute(
+        """
+        INSERT INTO ai_service_rankings (job_id, generated_by, results, errors)
+        VALUES ($1, $2, $3::jsonb, $4::jsonb)
+        ON CONFLICT (job_id) DO UPDATE
+          SET generated_by = EXCLUDED.generated_by,
+              results      = EXCLUDED.results,
+              errors       = EXCLUDED.errors,
+              generated_at = NOW()
+        """,
+        job_id, user["sub"],
+        json.dumps(output_scores),
+        json.dumps(errors),
+    )
 
     return {"success": True, "job_id": job_id, "results": output_scores, "errors": errors}
 
 
 @app.get("/employer/jobs/{job_id}/rankings", tags=["Recruitment"])
 async def get_job_rankings(job_id: str, user: dict = Depends(_require_role("employer"))):
-    store = _load_auth_store()
-    job = _find_job(store, job_id)
+    job = await _find_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found.")
 
-    ranking = store["rankings"].get(job_id)
-    if not ranking:
+    row = await get_pool().fetchrow(
+        "SELECT generated_by, results, errors FROM ai_service_rankings WHERE job_id = $1", job_id
+    )
+    if not row:
         return {"success": False, "job_id": job_id, "results": []}
 
-    if ranking.get("generated_by") and ranking["generated_by"] != user["sub"] and user["role"] != "admin":
+    if row["generated_by"] and row["generated_by"] != user["sub"] and user["role"] != "admin":
         raise HTTPException(status_code=403, detail="You can only view rankings for your own jobs.")
 
-    return {"success": True, "job_id": job_id, "results": ranking["results"], "errors": ranking.get("errors", [])}
+    return {
+        "success": True,
+        "job_id": job_id,
+        "results": row["results"],
+        "errors": row["errors"] or [],
+    }
 
 
 # ── Health ─────────────────────────────────────────────────────────────────
@@ -783,7 +808,7 @@ def analyze_jd(payload: JDTextInput):
 
 
 @app.post("/feedback", tags=["Feedback"])
-def submit_feedback(payload: FeedbackRequest):
+async def submit_feedback(payload: FeedbackRequest):
     """
     Submit recruiter feedback (employer score vs AI score) to calibrate future
     scoring for the same Job Description.
@@ -794,7 +819,7 @@ def submit_feedback(payload: FeedbackRequest):
     if not record.get("resume_id") and record.get("resume_name"):
         record["resume_id"] = record["resume_name"]
 
-    jd_id, calibration = add_feedback_record(record)
+    jd_id, calibration = await add_feedback_record(record)
     return {
         "success": True,
         "feedback_id": record["feedback_id"],
@@ -804,8 +829,8 @@ def submit_feedback(payload: FeedbackRequest):
 
 
 @app.get("/feedback/status/{jd_id}", tags=["Feedback"])
-def feedback_status(jd_id: str):
+async def feedback_status(jd_id: str):
     """
     Retrieve the current calibration state for a given Job Description ID.
     """
-    return {"success": True, "calibration": get_calibration(jd_id)}
+    return {"success": True, "calibration": await get_calibration(jd_id)}

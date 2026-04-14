@@ -1,153 +1,122 @@
 """
-Persistent lightweight feedback loop used to calibrate future shortlist scoring.
+Feedback-loop calibration store — backed by PostgreSQL.
 
-The intent is practical and transparent:
-- Employers submit corrections after reviewing a scored candidate.
-- We compute a mean offset (human_score - ai_score) per job posting.
-- That offset is then applied as a calibration factor on subsequent candidates.
+Tables used (defined in schema.sql):
+    ai_feedback          — raw employer score corrections per JD
+    ai_job_calibration   — per-JD aggregated calibration state
+
+The mean offset (employer_score − ai_score) per JD is stored and
+automatically applied on subsequent scoring calls for that JD.
 """
 
 import hashlib
-import json
-import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 
-FEEDBACK_FILE = os.path.join(os.path.dirname(__file__), "feedback_store.json")
-MAX_FEEDBACK_ENTRIES = 2000
-RECALIBRATE_TTL_SECONDS = 24 * 60 * 60
+from db_postgres import get_pool
 
-
-def _default_state() -> dict[str, Any]:
-    return {"entries": [], "job_calibration": {}}
-
-
-def _load_state() -> dict[str, Any]:
-    if not os.path.exists(FEEDBACK_FILE):
-        return _default_state()
-    try:
-        with open(FEEDBACK_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return _default_state()
-
-
-def _save_state(state: dict[str, Any]) -> None:
-    with open(FEEDBACK_FILE, "w", encoding="utf-8") as f:
-        json.dump(state, f, indent=2)
+MAX_OFFSET = 12.0
 
 
 def _derive_jd_id(jd_text: str) -> str:
     return hashlib.md5(jd_text.encode()).hexdigest()[:12]
 
 
-def _coerce_flag_match(flag_value: Any) -> str:
+def _to_iso_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _coerce_flag(flag_value: Any) -> str:
     if hasattr(flag_value, "value"):
         return str(flag_value.value)
     return str(flag_value)
 
 
-def _to_iso_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _parse_iso(value: str) -> datetime:
-    try:
-        return datetime.fromisoformat(value)
-    except ValueError:
-        return datetime.fromtimestamp(0, tz=timezone.utc)
-
-
-def _job_alignment(jd_feedback: list[dict[str, Any]]) -> float:
-    if not jd_feedback:
-        return 100.0
-    total = len(jd_feedback)
-    matches = 0
-    for entry in jd_feedback:
-        if _coerce_flag_match(entry.get("ai_flag")) == _coerce_flag_match(entry.get("employer_flag")):
-            matches += 1
-    return round((matches / total) * 100, 1)
-
-
-def _job_offset(jd_feedback: list[dict[str, Any]]) -> float:
-    if not jd_feedback:
-        return 0.0
-
-    deltas = []
-    for entry in jd_feedback:
-        deltas.append(
-            float(entry.get("employer_total_score", 0.0)) - float(entry.get("ai_total_score", 0.0))
+async def _recompute_and_save(jd_id: str) -> dict[str, Any]:
+    """Aggregate feedback rows for jd_id, update ai_job_calibration, return calibration dict."""
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT ai_total_score, employer_total_score, ai_flag, employer_flag "
+            "FROM ai_feedback WHERE jd_id = $1",
+            jd_id,
         )
-    if not deltas:
-        return 0.0
-    raw = sum(deltas) / len(deltas)
-    return round(max(min(raw, 12.0), -12.0), 2)
+        count = len(rows)
+        if count == 0:
+            offset, alignment = 0.0, 100.0
+        else:
+            deltas = [float(r["employer_total_score"]) - float(r["ai_total_score"]) for r in rows]
+            raw = sum(deltas) / len(deltas)
+            offset = round(max(min(raw, MAX_OFFSET), -MAX_OFFSET), 2)
+            matches = sum(1 for r in rows if r["ai_flag"] == r["employer_flag"])
+            alignment = round((matches / count) * 100, 1)
 
-
-def _recompute_calibration(state: dict[str, Any], jd_id: str) -> None:
-    jd_feedback = [entry for entry in state["entries"] if entry.get("jd_id") == jd_id]
-    calibration = {
-        "feedback_count": len(jd_feedback),
-        "feedback_alignment_pct": _job_alignment(jd_feedback),
-        "calibration_offset": _job_offset(jd_feedback),
+        await conn.execute(
+            """
+            INSERT INTO ai_job_calibration
+                (jd_id, feedback_count, feedback_alignment_pct, calibration_offset, last_recalibrated_at)
+            VALUES ($1, $2, $3, $4, NOW())
+            ON CONFLICT (jd_id) DO UPDATE
+              SET feedback_count          = EXCLUDED.feedback_count,
+                  feedback_alignment_pct  = EXCLUDED.feedback_alignment_pct,
+                  calibration_offset      = EXCLUDED.calibration_offset,
+                  last_recalibrated_at    = NOW()
+            """,
+            jd_id, count, alignment, offset,
+        )
+    return {
+        "jd_id": jd_id,
+        "feedback_count": count,
+        "feedback_alignment_pct": alignment,
+        "calibration_offset": offset,
         "last_recalibrated_at": _to_iso_now(),
     }
-    state["job_calibration"][jd_id] = calibration
 
 
-def add_feedback_record(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-    """
-    Persist feedback and return (jd_id, calibration) for the target JD.
-    """
-    state = _load_state()
-
+async def add_feedback_record(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """Persist one feedback entry and return (jd_id, updated_calibration)."""
     jd_id = payload.get("jd_id") or _derive_jd_id((payload.get("jd_text") or "").strip())
-    now = _to_iso_now()
-    record = {
-        "feedback_id": payload.get("feedback_id"),
-        "jd_id": jd_id,
-        "resume_id": payload.get("resume_id"),
-        "resume_name": payload.get("resume_name"),
-        "ai_total_score": payload.get("ai_total_score", 0.0),
-        "ai_flag": _coerce_flag_match(payload.get("ai_flag")),
-        "employer_total_score": payload.get("employer_total_score", 0.0),
-        "employer_flag": _coerce_flag_match(payload.get("employer_flag")),
-        "created_at": now,
-        "notes": payload.get("notes"),
-    }
-
-    state["entries"].append(record)
-    state["entries"] = state["entries"][-MAX_FEEDBACK_ENTRIES:]
-
-    _recompute_calibration(state, jd_id)
-    _save_state(state)
-
-    calibration = state["job_calibration"][jd_id]
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO ai_feedback
+                (jd_id, resume_id, resume_name,
+                 ai_total_score, employer_total_score, ai_flag, employer_flag)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            """,
+            jd_id,
+            payload.get("resume_id"),
+            payload.get("resume_name"),
+            float(payload.get("ai_total_score", 0.0)),
+            float(payload.get("employer_total_score", 0.0)),
+            _coerce_flag(payload.get("ai_flag", "")),
+            _coerce_flag(payload.get("employer_flag", "")),
+        )
+    calibration = await _recompute_and_save(jd_id)
     return jd_id, calibration
 
 
-def get_calibration(jd_id: str) -> dict[str, Any]:
-    state = _load_state()
-    calibration = state.get("job_calibration", {}).get(jd_id)
-
-    if not calibration:
+async def get_calibration(jd_id: str) -> dict[str, Any]:
+    """Return the current calibration state for a JD (offset = 0 if no feedback yet)."""
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT jd_id, feedback_count, feedback_alignment_pct, "
+            "calibration_offset, last_recalibrated_at "
+            "FROM ai_job_calibration WHERE jd_id = $1",
+            jd_id,
+        )
+    if row is None:
         return {
             "jd_id": jd_id,
             "feedback_count": 0,
-            "feedback_alignment_pct": 0.0,
+            "feedback_alignment_pct": 100.0,
             "calibration_offset": 0.0,
             "last_recalibrated_at": _to_iso_now(),
-            "stale": False,
         }
-
-    last = _parse_iso(calibration.get("last_recalibrated_at", _to_iso_now()))
-    stale = datetime.now(timezone.utc) - last > timedelta(seconds=RECALIBRATE_TTL_SECONDS)
-    if stale:
-        _recompute_calibration(state, jd_id)
-        _save_state(state)
-        calibration = state["job_calibration"][jd_id]
-
-    calibration = dict(calibration)
-    calibration["jd_id"] = jd_id
-    calibration["stale"] = stale
-    return calibration
+    result = dict(row)
+    # asyncpg returns datetimes as datetime objects; stringify for JSON serialisation
+    if isinstance(result.get("last_recalibrated_at"), datetime):
+        result["last_recalibrated_at"] = result["last_recalibrated_at"].isoformat()
+    return result

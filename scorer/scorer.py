@@ -110,8 +110,8 @@ Return plain text, no markdown or bullet symbols.
         return _build_summary_text(name, flag, matched, missing, score)
 
 
-def _apply_calibration(jd_id: str, raw_score: float) -> tuple[float, dict]:
-    calibration = get_calibration(jd_id)
+async def _apply_calibration(jd_id: str, raw_score: float) -> tuple[float, dict]:
+    calibration = await get_calibration(jd_id)
     offset = float(calibration.get("calibration_offset", 0.0))
     final_score = max(0.0, min(100.0, raw_score + offset))
     return final_score, calibration
@@ -156,7 +156,7 @@ async def score_candidate(
     result = await score_resume_against_jd(jd_id, resume_id, weight_dict)
 
     # 5. Apply employer calibration
-    calibrated_score, calibration = _apply_calibration(jd_id, result["total_score"])
+    calibrated_score, calibration = await _apply_calibration(jd_id, result["total_score"])
 
     # 6. Build summary
     matched = [p["resume_text"] for p in result["matched_pairs"] if p["category"] == "skill"]
